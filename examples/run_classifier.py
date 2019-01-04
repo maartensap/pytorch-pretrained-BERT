@@ -36,6 +36,8 @@ from pytorch_pretrained_bert.modeling import BertForSequenceClassification
 from pytorch_pretrained_bert.optimization import BertAdam
 from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 
+from run_atomic import AtomicProcessor
+
 logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt = '%m/%d/%Y %H:%M:%S',
                     level = logging.INFO)
@@ -97,8 +99,7 @@ class DataProcessor(object):
             for line in reader:
                 lines.append(line)
             return lines
-
-
+        
 class MrpcProcessor(DataProcessor):
     """Processor for the MRPC data set (GLUE version)."""
 
@@ -396,12 +397,14 @@ def main():
         "cola": ColaProcessor,
         "mnli": MnliProcessor,
         "mrpc": MrpcProcessor,
+        "atomic": AtomicProcessor
     }
 
     num_labels_task = {
         "cola": 2,
         "mnli": 3,
         "mrpc": 2,
+        "atomic": 1
     }
 
     if args.local_rank == -1 or args.no_cuda:
