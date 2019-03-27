@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2018 The Google AI Language Team Authors and The HugginFace Inc. team.
+# Copyright 2018 The Google AI Language Team Authors and The HuggingFace Inc. team.
 # Copyright (c) 2018, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,37 +15,28 @@
 # limitations under the License.
 """BERT finetuning runner."""
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+from __future__ import absolute_import, division, print_function, unicode_literals
 
-import os
-import logging
 import argparse
-from tqdm import tqdm, trange
+import logging
+import os
+import random
+from io import open
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, RandomSampler
+from torch.utils.data import DataLoader, Dataset, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
+from tqdm import tqdm, trange
 
-from pytorch_pretrained_bert.tokenization import BertTokenizer
 from pytorch_pretrained_bert.modeling import BertForPreTraining
-from pytorch_pretrained_bert.optimization import BertAdam
-
-from torch.utils.data import Dataset
-import random
+from pytorch_pretrained_bert.tokenization import BertTokenizer
+from pytorch_pretrained_bert.optimization import BertAdam, warmup_linear
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S',
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-def warmup_linear(x, warmup=0.002):
-    if x < warmup:
-        return x/warmup
-    return 1.0 - x
 
 
 class BERTDataset(Dataset):
@@ -185,16 +176,16 @@ class BERTDataset(Dataset):
             if self.line_buffer is None:
                 # read first non-empty line of file
                 while t1 == "" :
-                    t1 = self.file.__next__().strip()
-                    t2 = self.file.__next__().strip()
+                    t1 = next(self.file).strip()
+                    t2 = next(self.file).strip()
             else:
                 # use t2 from previous iteration as new t1
                 t1 = self.line_buffer
-                t2 = self.file.__next__().strip()
+                t2 = next(self.file).strip()
                 # skip empty rows that are used for separating documents and keep track of current doc id
                 while t2 == "" or t1 == "":
-                    t1 = self.file.__next__().strip()
-                    t2 = self.file.__next__().strip()
+                    t1 = next(self.file).strip()
+                    t2 = next(self.file).strip()
                     self.current_doc = self.current_doc+1
             self.line_buffer = t2
 
@@ -228,15 +219,15 @@ class BERTDataset(Dataset):
     def get_next_line(self):
         """ Gets next line of random_file and starts over when reaching end of file"""
         try:
-            line = self.random_file.__next__().strip()
+            line = next(self.random_file).strip()
             #keep track of which document we are currently looking at to later avoid having the same doc as t1
             if line == "":
                 self.current_random_doc = self.current_random_doc + 1
-                line = self.random_file.__next__().strip()
+                line = next(self.random_file).strip()
         except StopIteration:
             self.random_file.close()
             self.random_file = open(self.corpus_path, "r", encoding=self.encoding)
-            line = self.random_file.__next__().strip()
+            line = next(self.random_file).strip()
         return line
 
 
@@ -328,8 +319,8 @@ def convert_example_to_features(example, max_seq_length, tokenizer):
     # Account for [CLS], [SEP], [SEP] with "- 3"
     _truncate_seq_pair(tokens_a, tokens_b, max_seq_length - 3)
 
-    t1_random, t1_label = random_word(tokens_a, tokenizer)
-    t2_random, t2_label = random_word(tokens_b, tokenizer)
+    tokens_a, t1_label = random_word(tokens_a, tokenizer)
+    tokens_b, t2_label = random_word(tokens_b, tokenizer)
     # concatenate lm labels and account for CLS, SEP, SEP
     lm_label_ids = ([-1] + t1_label + [-1] + t2_label + [-1])
 
@@ -410,7 +401,7 @@ def main():
     parser = argparse.ArgumentParser()
 
     ## Required parameters
-    parser.add_argument("--train_file",
+    parser.add_argument("--train_corpus",
                         default=None,
                         type=str,
                         required=True,
@@ -438,10 +429,6 @@ def main():
                         default=32,
                         type=int,
                         help="Total batch size for training.")
-    parser.add_argument("--eval_batch_size",
-                        default=8,
-                        type=int,
-                        help="Total batch size for eval.")
     parser.add_argument("--learning_rate",
                         default=3e-5,
                         type=float,
@@ -503,7 +490,7 @@ def main():
         raise ValueError("Invalid gradient_accumulation_steps parameter: {}, should be >= 1".format(
                             args.gradient_accumulation_steps))
 
-    args.train_batch_size = int(args.train_batch_size / args.gradient_accumulation_steps)
+    args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -511,23 +498,26 @@ def main():
     if n_gpu > 0:
         torch.cuda.manual_seed_all(args.seed)
 
-    if not args.do_train and not args.do_eval:
-        raise ValueError("At least one of `do_train` or `do_eval` must be True.")
+    if not args.do_train:
+        raise ValueError("Training is currently the only implemented execution option. Please set `do_train`.")
 
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
         raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
-    os.makedirs(args.output_dir, exist_ok=True)
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
 
     tokenizer = BertTokenizer.from_pretrained(args.bert_model, do_lower_case=args.do_lower_case)
 
     #train_examples = None
-    num_train_steps = None
+    num_train_optimization_steps = None
     if args.do_train:
-        print("Loading Train Dataset", args.train_file)
-        train_dataset = BERTDataset(args.train_file, tokenizer, seq_len=args.max_seq_length,
+        print("Loading Train Dataset", args.train_corpus)
+        train_dataset = BERTDataset(args.train_corpus, tokenizer, seq_len=args.max_seq_length,
                                     corpus_lines=None, on_memory=args.on_memory)
-        num_train_steps = int(
-            len(train_dataset) / args.train_batch_size / args.gradient_accumulation_steps * args.num_train_epochs)
+        num_train_optimization_steps = int(
+            len(train_dataset) / args.train_batch_size / args.gradient_accumulation_steps) * args.num_train_epochs
+        if args.local_rank != -1:
+            num_train_optimization_steps = num_train_optimization_steps // torch.distributed.get_world_size()
 
     # Prepare model
     model = BertForPreTraining.from_pretrained(args.bert_model)
@@ -550,6 +540,7 @@ def main():
         {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
         {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
         ]
+
     if args.fp16:
         try:
             from apex.optimizers import FP16_Optimizer
@@ -570,19 +561,19 @@ def main():
         optimizer = BertAdam(optimizer_grouped_parameters,
                              lr=args.learning_rate,
                              warmup=args.warmup_proportion,
-                             t_total=num_train_steps)
+                             t_total=num_train_optimization_steps)
 
     global_step = 0
     if args.do_train:
         logger.info("***** Running training *****")
         logger.info("  Num examples = %d", len(train_dataset))
         logger.info("  Batch size = %d", args.train_batch_size)
-        logger.info("  Num steps = %d", num_train_steps)
+        logger.info("  Num steps = %d", num_train_optimization_steps)
 
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_dataset)
         else:
-            #TODO: check if this works with current data generator from disk that relies on file.__next__
+            #TODO: check if this works with current data generator from disk that relies on next(file)
             # (it doesn't return item back by index)
             train_sampler = DistributedSampler(train_dataset)
         train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
@@ -607,10 +598,12 @@ def main():
                 nb_tr_examples += input_ids.size(0)
                 nb_tr_steps += 1
                 if (step + 1) % args.gradient_accumulation_steps == 0:
-                    # modify learning rate with special warm up BERT uses
-                    lr_this_step = args.learning_rate * warmup_linear(global_step/num_train_steps, args.warmup_proportion)
-                    for param_group in optimizer.param_groups:
-                        param_group['lr'] = lr_this_step
+                    if args.fp16:
+                        # modify learning rate with special warm up BERT uses
+                        # if args.fp16 is False, BertAdam is used that handles this automatically
+                        lr_this_step = args.learning_rate * warmup_linear(global_step/num_train_optimization_steps, args.warmup_proportion)
+                        for param_group in optimizer.param_groups:
+                            param_group['lr'] = lr_this_step
                     optimizer.step()
                     optimizer.zero_grad()
                     global_step += 1

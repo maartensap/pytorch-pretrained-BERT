@@ -18,75 +18,45 @@ import os
 import unittest
 from io import open
 
-from pytorch_pretrained_bert.tokenization import (BasicTokenizer,
-                                                  BertTokenizer,
-                                                  WordpieceTokenizer,
+from pytorch_pretrained_bert.tokenization_transfo_xl import (TransfoXLTokenizer,
                                                   _is_control, _is_punctuation,
                                                   _is_whitespace)
 
 
-class TokenizationTest(unittest.TestCase):
+class TransfoXLTokenizationTest(unittest.TestCase):
 
     def test_full_tokenizer(self):
         vocab_tokens = [
-            "[UNK]", "[CLS]", "[SEP]", "want", "##want", "##ed", "wa", "un", "runn",
-            "##ing", ","
+            "<unk>", "[CLS]", "[SEP]", "want", "unwanted", "wa", "un", "running", ","
         ]
-        with open("/tmp/bert_tokenizer_test.txt", "w", encoding='utf-8') as vocab_writer:
+        with open("/tmp/transfo_xl_tokenizer_test.txt", "w", encoding='utf-8') as vocab_writer:
             vocab_writer.write("".join([x + "\n" for x in vocab_tokens]))
-
             vocab_file = vocab_writer.name
 
-        tokenizer = BertTokenizer(vocab_file)
+        tokenizer = TransfoXLTokenizer(vocab_file=vocab_file, lower_case=True)
+        tokenizer.build_vocab()
         os.remove(vocab_file)
 
-        tokens = tokenizer.tokenize(u"UNwant\u00E9d,running")
-        self.assertListEqual(tokens, ["un", "##want", "##ed", ",", "runn", "##ing"])
+        tokens = tokenizer.tokenize(u"<unk> UNwant\u00E9d,running")
+        self.assertListEqual(tokens, ["<unk>", "unwanted", ",", "running"])
 
         self.assertListEqual(
-            tokenizer.convert_tokens_to_ids(tokens), [7, 4, 5, 10, 8, 9])
+            tokenizer.convert_tokens_to_ids(tokens), [0, 4, 8, 7])
 
-    def test_chinese(self):
-        tokenizer = BasicTokenizer()
-
-        self.assertListEqual(
-            tokenizer.tokenize(u"ah\u535A\u63A8zz"),
-            [u"ah", u"\u535A", u"\u63A8", u"zz"])
-
-    def test_basic_tokenizer_lower(self):
-        tokenizer = BasicTokenizer(do_lower_case=True)
+    def test_full_tokenizer_lower(self):
+        tokenizer = TransfoXLTokenizer(lower_case=True)
 
         self.assertListEqual(
             tokenizer.tokenize(u" \tHeLLo!how  \n Are yoU?  "),
             ["hello", "!", "how", "are", "you", "?"])
         self.assertListEqual(tokenizer.tokenize(u"H\u00E9llo"), ["hello"])
 
-    def test_basic_tokenizer_no_lower(self):
-        tokenizer = BasicTokenizer(do_lower_case=False)
+    def test_full_tokenizer_no_lower(self):
+        tokenizer = TransfoXLTokenizer(lower_case=False)
 
         self.assertListEqual(
             tokenizer.tokenize(u" \tHeLLo!how  \n Are yoU?  "),
             ["HeLLo", "!", "how", "Are", "yoU", "?"])
-
-    def test_wordpiece_tokenizer(self):
-        vocab_tokens = [
-            "[UNK]", "[CLS]", "[SEP]", "want", "##want", "##ed", "wa", "un", "runn",
-            "##ing"
-        ]
-
-        vocab = {}
-        for (i, token) in enumerate(vocab_tokens):
-            vocab[token] = i
-        tokenizer = WordpieceTokenizer(vocab=vocab)
-
-        self.assertListEqual(tokenizer.tokenize(""), [])
-
-        self.assertListEqual(
-            tokenizer.tokenize("unwanted running"),
-            ["un", "##want", "##ed", "runn", "##ing"])
-
-        self.assertListEqual(
-            tokenizer.tokenize("unwantedX running"), ["[UNK]", "runn", "##ing"])
 
     def test_is_whitespace(self):
         self.assertTrue(_is_whitespace(u" "))
