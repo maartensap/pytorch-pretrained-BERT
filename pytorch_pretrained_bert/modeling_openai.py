@@ -469,7 +469,12 @@ class OpenAIGPTPreTrainedModel(nn.Module):
                 config_file, resolved_config_file))
         # Load config
         config = OpenAIGPTConfig.from_json_file(resolved_config_file)
+        
+        # Hack: updating config file with kwargs
+        config.__dict__.update(kwargs)
+
         logger.info("Model config {}".format(config))
+        
         # Instantiate model.
         model = cls(config, *inputs, **kwargs)
         if state_dict is None and not from_tf:

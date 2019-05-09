@@ -59,6 +59,7 @@ def evalSentences(text,answers):
   # predicted_index = torch.argmax(predictions[0, masked_index]).item()
   predicted_index = torch.softmax(predictions[0, masked_index],dim=0)
   print(text)
+  embed();exit()
   for i,(a,ix) in enumerate(zip(answers,answer_ix)):
     p = predicted_index[ix].item()
     print(f"{a}: {p:.4g}"+( " <-" if i == 0 else ""))
