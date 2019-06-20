@@ -38,6 +38,7 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+from IPython import embed
 
 class BERTDataset(Dataset):
     def __init__(self, corpus_path, tokenizer, seq_len, encoding="utf-8", corpus_lines=None, on_memory=True):
@@ -514,6 +515,10 @@ def main():
         print("Loading Train Dataset", args.train_corpus)
         train_dataset = BERTDataset(args.train_corpus, tokenizer, seq_len=args.max_seq_length,
                                     corpus_lines=None, on_memory=args.on_memory)
+        try:
+            len(train_dataset)
+        except:
+            print("Documents in the text should be separated by empty lines, but each sentence should be on its own line.")
         num_train_optimization_steps = int(
             len(train_dataset) / args.train_batch_size / args.gradient_accumulation_steps) * args.num_train_epochs
         if args.local_rank != -1:
@@ -582,10 +587,10 @@ def main():
         train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
 
         model.train()
-        for _ in trange(int(args.num_train_epochs), desc="Epoch"):
+        for _ in trange(int(args.num_train_epochs), desc="Epoch",ascii=True):
             tr_loss = 0
             nb_tr_examples, nb_tr_steps = 0, 0
-            for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
+            for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration",ascii=True)):
                 batch = tuple(t.to(device) for t in batch)
                 input_ids, input_mask, segment_ids, lm_label_ids, is_next = batch
                 loss = model(input_ids, segment_ids, input_mask, lm_label_ids, is_next)
